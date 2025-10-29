@@ -186,6 +186,13 @@ $fileList = isset($_SESSION['authenticated']) ? getFileList() : [];
         </div>
     </div>
 
+    <footer class="text-center mt-5">
+        <div class="text-muted">
+            <h5>SMFM (Simple Magnitola File Manager) by @yelagin</h5>
+            <a href="https://yelagin.ru/all/simple-script-filemanager/" target="_blank">https://yelagin.ru/all/simple-script-filemanager/</a>
+        </div>
+    </footer>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <?php if (isset($_SESSION['authenticated'])): ?>
         <script src="script.js"></script>
