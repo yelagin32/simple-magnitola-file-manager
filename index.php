@@ -21,7 +21,29 @@ if (!isset($_SESSION['authenticated'])) {
     }
 }
 
-// Получение списка файлов
+// --- Вспомогательные функции ---
+function getDirectorySize($dir) {
+    $size = 0;
+    $files = glob($dir . '/*');
+    if ($files === false) return 0;
+    foreach ($files as $file) {
+        if (is_file($file)) {
+            $size += filesize($file);
+        }
+    }
+    return $size;
+}
+
+function formatBytes($bytes, $precision = 2) {
+    if ($bytes === 0) return '0 байт';
+    $units = ['байт', 'КБ', 'МБ', 'ГБ', 'ТБ'];
+    $bytes = max($bytes, 0);
+    $pow = floor(($bytes ? log($bytes) : 0) / log(1024));
+    $pow = min($pow, count($units) - 1);
+    $bytes /= (1 << (10 * $pow));
+    return round($bytes, $precision) . ' ' . $units[$pow];
+}
+
 function getFileList() {
     $files = array_diff(scandir(UPLOADS_DIR), array('.', '..'));
     $fileList = [];
@@ -34,14 +56,19 @@ function getFileList() {
             'type' => pathinfo($filePath, PATHINFO_EXTENSION)
         ];
     }
-    // Сортировка по дате по умолчанию
     usort($fileList, function($a, $b) {
         return $b['date'] - $a['date'];
     });
     return $fileList;
 }
 
-$fileList = isset($_SESSION['authenticated']) ? getFileList() : [];
+if (isset($_SESSION['authenticated'])) {
+    $fileList = getFileList();
+    $totalSize = getDirectorySize(UPLOADS_DIR);
+    $quotaBytes = DISK_QUOTA_GB > 0 ? DISK_QUOTA_GB * 1024 * 1024 * 1024 : 0;
+    $remainingSpace = $quotaBytes > 0 ? $quotaBytes - $totalSize : -1; // -1 означает бесконечность
+    $percentageUsed = $quotaBytes > 0 ? ($totalSize / $quotaBytes) * 100 : 0;
+}
 
 ?>
 <!DOCTYPE html>
@@ -73,7 +100,7 @@ $fileList = isset($_SESSION['authenticated']) ? getFileList() : [];
                 </div>
             </div>
         <?php else: ?>
-            <div class="card mb-4">
+            <div id="upload-container" class="card mb-4" data-remaining-space="<?php echo $remainingSpace; ?>">
                 <div class="card-body">
                     <div class="d-flex justify-content-between align-items-center mb-4">
                         <h5 class="card-title mb-0">Загрузка файлов</h5>
@@ -97,44 +124,33 @@ $fileList = isset($_SESSION['authenticated']) ? getFileList() : [];
             <div class="card">
                 <div class="card-body">
                     <h5 class="card-title mb-4">Список файлов</h5>
+                    
+                    <?php if ($quotaBytes > 0): ?>
+                    <div class="quota-info mb-3">
+                        <div class="d-flex justify-content-between">
+                            <span>Занято: <strong><?php echo formatBytes($totalSize); ?></strong> из <strong><?php echo formatBytes($quotaBytes); ?></strong></span>
+                            <span>Свободно: <strong><?php echo formatBytes($remainingSpace); ?></strong></span>
+                        </div>
+                        <div class="progress mt-2" style="height: 20px;">
+                            <div class="progress-bar" role="progressbar" style="width: <?php echo $percentageUsed; ?>%;" aria-valuenow="<?php echo $percentageUsed; ?>" aria-valuemin="0" aria-valuemax="100">
+                                <?php echo round($percentageUsed, 1); ?>%
+                            </div>
+                        </div>
+                    </div>
+                    <?php endif; ?>
+
                     <div class="mb-3">
                         <select id="sortType" class="form-select" onchange="sortFiles()">
-                            <option value="name">Сортировать по имени</option>
                             <option value="date" selected>Сортировать по дате</option>
-                            <option value="type">Сортировать по типу файла</option>
-                            <option value="size">Сортировать по размеру файла (большие в начале)</option>
+                            <option value="name">Сортировать по имени</option>
+                            <option value="size">Сортировать по размеру</option>
+                            <option value="type">Сортировать по типу</option>
                         </select>
                     </div>
                     <div id="fileList" class="list-group">
                         <?php if (empty($fileList)): ?>
                             <p class="text-muted">Нет загруженных файлов</p>
-                        <?php else:
-                            $totalSize = 0;
-                            foreach ($fileList as $file) {
-                                $totalSize += $file['size'];
-                            }
-                            $formattedTotalSize = '';
-                            if ($totalSize >= 1073741824) {
-                                $formattedTotalSize = number_format($totalSize / 1073741824, 2) . ' ГБ';
-                            } elseif ($totalSize >= 1048576) {
-                                $formattedTotalSize = number_format($totalSize / 1048576, 2) . ' МБ';
-                            } elseif ($totalSize >= 1024) {
-                                $formattedTotalSize = number_format($totalSize / 1024, 2) . ' КБ';
-                            } else {
-                                $formattedTotalSize = $totalSize . ' байт';
-                            }
-                        ?>
-                            <div class="alert alert-info mb-3">
-                                <i class="bi bi-info-circle"></i>
-                                <strong>Загружено <?php echo count($fileList); ?> файлов</strong> - занято <strong><?php echo $formattedTotalSize; ?></strong>
-                            </div>
-                        <?php
-                            foreach ($fileList as $file):
-                                $formattedSize = $file['size'] > 1048576
-                                    ? number_format($file['size'] / 1048576, 2) . ' MB'
-                                    : number_format($file['size'] / 1024, 2) . ' KB';
-                                $formattedDate = date('d.m.Y H:i:s', $file['date']);
-                        ?>
+                        <?php else: foreach ($fileList as $file): ?>
                             <div class="list-group-item d-md-flex justify-content-between align-items-center file-item" 
                                  data-name="<?php echo htmlspecialchars($file['name']); ?>"
                                  data-date="<?php echo $file['date']; ?>"
@@ -145,8 +161,8 @@ $fileList = isset($_SESSION['authenticated']) ? getFileList() : [];
                                         <strong class="file-name"><?php echo htmlspecialchars($file['name']); ?></strong>
                                     </a>
                                     <div class="text-muted small">
-                                        <span class="file-date"><?php echo $formattedDate; ?></span>
-                                        <span class="file-size badge bg-primary rounded-pill ms-2"><?php echo $formattedSize; ?></span>
+                                        <span class="file-date"><?php echo date('d.m.Y H:i:s', $file['date']); ?></span>
+                                        <span class="file-size badge bg-primary rounded-pill ms-2"><?php echo formatBytes($file['size']); ?></span>
                                     </div>
                                 </div>
                                 <div class="file-actions mt-2 mt-md-0">
@@ -161,8 +177,7 @@ $fileList = isset($_SESSION['authenticated']) ? getFileList() : [];
                                     </button>
                                 </div>
                             </div>
-                        <?php endforeach; ?>
-                        <?php endif; ?>
+                        <?php endforeach; endif; ?>
                     </div>
                 </div>
             </div>

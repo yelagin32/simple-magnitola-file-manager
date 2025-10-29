@@ -1,177 +1,109 @@
 <?php
+
 require_once 'config.php';
 
-// Функция для логирования
-function writeLog($message) {
-    file_put_contents('upload.log', date('Y-m-d H:i:s') . ': ' . $message . "\n", FILE_APPEND);
+// Логирование для отладки
+ini_set('log_errors', 1);
+ini_set('error_log', 'upload.log');
+
+// Функция для получения размера директории
+function getDirectorySize($dir) {
+    $size = 0;
+    $files = glob($dir . '/*');
+    if ($files === false) return 0;
+    foreach ($files as $file) {
+        if (is_file($file)) {
+            $size += filesize($file);
+        }
+    }
+    return $size;
 }
 
-session_start();
+// --- Начало обработки запроса ---
 
-if (!isset($_SESSION['authenticated'])) {
-    http_response_code(403);
-    echo json_encode(['status' => 'error', 'message' => 'Доступ запрещен']);
+header('Content-Type: application/json');
+
+if (!file_exists(UPLOADS_DIR)) {
+    if (!mkdir(UPLOADS_DIR, 0755, true)) {
+        echo json_encode(['status' => 'error', 'message' => 'Не удалось создать директорию для загрузок.']);
+        exit;
+    }
+}
+
+if (!file_exists(CHUNKS_DIR)) {
+    if (!mkdir(CHUNKS_DIR, 0755, true)) {
+        echo json_encode(['status' => 'error', 'message' => 'Не удалось создать директорию для временных файлов.']);
+        exit;
+    }
+}
+
+$chunkIndex = isset($_POST['chunk']) ? intval($_POST['chunk']) : 0;
+$totalChunks = isset($_POST['chunks']) ? intval($_POST['chunks']) : 1;
+$fileName = isset($_FILES['file']['name']) ? basename($_FILES['file']['name']) : 'unknown.tmp';
+$tmpPath = $_FILES['file']['tmp_name'];
+
+$chunkPath = CHUNKS_DIR . '/' . $fileName . '.part' . $chunkIndex;
+
+if (!move_uploaded_file($tmpPath, $chunkPath)) {
+    echo json_encode(['status' => 'error', 'message' => 'Ошибка сохранения временного файла.']);
     exit;
 }
 
-if (isset($_FILES['file'])) {
-    $response = ['status' => 'error', 'message' => 'Неизвестная ошибка'];
+// Если это последний чанк, собираем файл
+if (($chunkIndex + 1) === $totalChunks) {
+    $finalPath = UPLOADS_DIR . '/' . $fileName;
+    $fileSize = 0;
 
-    if (isset($_POST['chunk']) && isset($_POST['chunks'])) {
-        $chunk = intval($_POST['chunk']);
-        $chunks = intval($_POST['chunks']);
-        $fileName = basename($_FILES['file']['name']);
-
-        writeLog("Начало обработки чанка {$chunk} из {$chunks} для файла {$fileName}");
-
-        $fileChunkDir = CHUNKS_DIR . '/' . md5($fileName);
-        if (!file_exists($fileChunkDir)) {
-            mkdir($fileChunkDir, 0777, true);
-            writeLog("Создана директория для чанков: {$fileChunkDir}");
-        }
-
-        $chunkFile = $fileChunkDir . '/' . $chunk;
-
-        if (file_exists($chunkFile) && filesize($chunkFile) > 0) {
-            writeLog("Чанк {$chunk} уже существует, пропускаем");
-            $response = [
-                'status' => 'success',
-                'message' => 'Чанк уже существует',
-                'chunk' => $chunk,
-                'chunks' => $chunks
-            ];
-        } else {
-            if (move_uploaded_file($_FILES['file']['tmp_name'], $chunkFile)) {
-                writeLog("Чанк {$chunk} успешно сохранен: {$chunkFile}");
-
-                $allChunksUploaded = true;
-                $uploadedChunks = [];
-                for ($i = 0; $i < $chunks; $i++) {
-                    $currentChunk = $fileChunkDir . '/' . $i;
-                    if (!file_exists($currentChunk) || filesize($currentChunk) === 0) {
-                        $allChunksUploaded = false;
-                        break;
-                    }
-                    $uploadedChunks[] = $currentChunk;
-                }
-
-                writeLog("Проверка чанков: " . ($allChunksUploaded ? "все загружены" : "загружены не все"));
-
-                if ($allChunksUploaded) {
-                    writeLog("Все чанки загружены, начинаем объединение");
-
-                    $finalFileName = UPLOADS_DIR . '/' . $fileName;
-                    $counter = 1;
-                    while (file_exists($finalFileName)) {
-                        $finalFileName = UPLOADS_DIR . '/' . pathinfo($fileName, PATHINFO_FILENAME)
-                            . "_{$counter}."
-                            . pathinfo($fileName, PATHINFO_EXTENSION);
-                        $counter++;
-                    }
-
-                    writeLog("Создаем итоговый файл: {$finalFileName}");
-
-                    try {
-                        $finalFile = fopen($finalFileName, 'wb');
-                        if (!$finalFile) {
-                            throw new Exception("Не удалось открыть файл для записи: {$finalFileName}");
-                        }
-
-                        $totalSize = 0;
-                        for ($i = 0; $i < $chunks; $i++) {
-                            $chunkPath = $fileChunkDir . '/' . $i;
-                            $totalSize += filesize($chunkPath);
-                        }
-
-                        $freeSpace = disk_free_space(UPLOADS_DIR);
-                        if ($freeSpace < $totalSize) {
-                            throw new Exception("Недостаточно места на диске. Требуется: " .
-                                number_format($totalSize / (1024*1024), 2) . " МБ, доступно: " .
-                                number_format($freeSpace / (1024*1024), 2) . " МБ");
-                        }
-
-                        for ($i = 0; $i < $chunks; $i++) {
-                            $chunkPath = $fileChunkDir . '/' . $i;
-                            $chunkContent = file_get_contents($chunkPath);
-                            if ($chunkContent === false) {
-                                throw new Exception("Не удалось прочитать чанк {$i}: {$chunkPath}");
-                            }
-                            fwrite($finalFile, $chunkContent);
-                            unset($chunkContent);
-                        }
-
-                        fclose($finalFile);
-
-                        if (!file_exists($finalFileName) || filesize($finalFileName) !== $totalSize) {
-                            throw new Exception("Ошибка проверки итогового файла. Ожидаемый размер: {$totalSize}, фактический: " . filesize($finalFileName));
-                        }
-
-                        writeLog("Файл успешно создан: {$finalFileName}, размер: " . filesize($finalFileName));
-
-                        foreach ($uploadedChunks as $chunk) {
-                            unlink($chunk);
-                        }
-                        rmdir($fileChunkDir);
-
-                        $response = [
-                            'status' => 'success',
-                            'message' => 'Файл успешно загружен!',
-                            'filename' => basename($finalFileName)
-                        ];
-
-                    } catch (Exception $e) {
-                        writeLog("Критическая ошибка: " . $e->getMessage());
-                        if (isset($finalFile) && is_resource($finalFile)) {
-                            fclose($finalFile);
-                        }
-                        if (file_exists($finalFileName)) {
-                            unlink($finalFileName);
-                        }
-                        $response = [
-                            'status' => 'error',
-                            'message' => 'Ошибка при создании файла: ' . $e->getMessage()
-                        ];
-                    }
-                } else {
-                    $response = [
-                        'status' => 'success',
-                        'message' => 'Чанк успешно загружен',
-                        'chunk' => $chunk,
-                        'chunks' => $chunks,
-                        'uploaded' => count($uploadedChunks)
-                    ];
-                }
-            } else {
-                writeLog("Ошибка при сохранении чанка {$chunk}");
-                $response = [
-                    'status' => 'error',
-                    'message' => 'Ошибка при сохранении чанка'
-                ];
+    // Проверка квоты перед сборкой файла
+    $quotaBytes = DISK_QUOTA_GB > 0 ? DISK_QUOTA_GB * 1024 * 1024 * 1024 : 0;
+    if ($quotaBytes > 0) {
+        $currentSize = getDirectorySize(UPLOADS_DIR);
+        // Суммируем размеры всех чанков для получения размера файла
+        for ($i = 0; $i < $totalChunks; $i++) {
+            $partPath = CHUNKS_DIR . '/' . $fileName . '.part' . $i;
+            if (file_exists($partPath)) {
+                $fileSize += filesize($partPath);
             }
         }
-    } else {
-        // Обычная загрузка файла
-        $filename = basename($_FILES['file']['name']);
-        $path = UPLOADS_DIR . '/' . $filename;
-        $counter = 1;
-        while (file_exists($path)) {
-            $filename = pathinfo($_FILES['file']['name'], PATHINFO_FILENAME)
-                . "_{$counter}."
-                . pathinfo($_FILES['file']['name'], PATHINFO_EXTENSION);
-            $path = UPLOADS_DIR . '/' . $filename;
-            $counter++;
-        }
 
-        if (move_uploaded_file($_FILES['file']['tmp_name'], $path)) {
-            $response = [
-                'status' => 'success',
-                'message' => 'Файл успешно загружен!',
-                'filename' => $filename
-            ];
+        if (($currentSize + $fileSize) > $quotaBytes) {
+            // Удаляем все временные файлы, чтобы не занимать место
+            for ($i = 0; $i < $totalChunks; $i++) {
+                $partPath = CHUNKS_DIR . '/' . $fileName . '.part' . $i;
+                if (file_exists($partPath)) {
+                    unlink($partPath);
+                }
+            }
+            echo json_encode(['status' => 'error', 'message' => 'Ошибка: Превышена дисковая квота.']);
+            exit;
         }
     }
 
-    echo json_encode($response);
-    exit;
+    $out = fopen($finalPath, 'wb');
+    if ($out === false) {
+        echo json_encode(['status' => 'error', 'message' => 'Не удалось открыть файл для записи.']);
+        exit;
+    }
+
+    for ($i = 0; $i < $totalChunks; $i++) {
+        $partPath = CHUNKS_DIR . '/' . $fileName . '.part' . $i;
+        $in = fopen($partPath, 'rb');
+        if ($in === false) continue;
+
+        while ($buff = fread($in, 4096)) {
+            fwrite($out, $buff);
+        }
+
+        fclose($in);
+        unlink($partPath); // Удаляем чанк после добавления
+    }
+
+    fclose($out);
+
+    echo json_encode(['status' => 'success']);
+} else {
+    // Если это не последний чанк, просто подтверждаем успешное получение
+    echo json_encode(['status' => 'success']);
 }
+
 ?>
