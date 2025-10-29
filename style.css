@@ -141,3 +141,16 @@
         margin-right: 0.5rem;
     }
 }
+
+/* Выделение кнопки "Выбрать файлы" */
+#fileInput::file-selector-button {
+    background-color: #198754;
+    color: #fff;
+    border-color: #198754;
+    transition: background-color .15s ease-in-out, border-color .15s ease-in-out;
+}
+
+#fileInput::file-selector-button:hover {
+    background-color: #157347;
+    border-color: #146c43;
+}
