@@ -263,6 +263,8 @@ function sortFiles() {
             return parseInt(b.dataset.date) - parseInt(a.dataset.date);
         } else if (sortType === 'type') {
             return a.dataset.type.localeCompare(b.dataset.type);
+        } else if (sortType === 'size') {
+            return parseInt(b.dataset.size) - parseInt(a.dataset.size);
         }
     });
 

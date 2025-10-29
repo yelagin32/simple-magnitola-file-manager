@@ -102,6 +102,7 @@ $fileList = isset($_SESSION['authenticated']) ? getFileList() : [];
                             <option value="name">Сортировать по имени</option>
                             <option value="date" selected>Сортировать по дате</option>
                             <option value="type">Сортировать по типу файла</option>
+                            <option value="size">Сортировать по размеру файла (большие в начале)</option>
                         </select>
                     </div>
                     <div id="fileList" class="list-group">
@@ -137,7 +138,8 @@ $fileList = isset($_SESSION['authenticated']) ? getFileList() : [];
                             <div class="list-group-item d-md-flex justify-content-between align-items-center file-item" 
                                  data-name="<?php echo htmlspecialchars($file['name']); ?>"
                                  data-date="<?php echo $file['date']; ?>"
-                                 data-type="<?php echo $file['type']; ?>">
+                                 data-type="<?php echo $file['type']; ?>"
+                                 data-size="<?php echo $file['size']; ?>">
                                 <div class="file-info">
                                     <a href="<?php echo UPLOADS_DIR . '/' . htmlspecialchars($file['name']); ?>" target="_blank" class="file-name-link">
                                         <strong class="file-name"><?php echo htmlspecialchars($file['name']); ?></strong>
