@@ -139,13 +139,18 @@ $fileList = isset($_SESSION['authenticated']) ? getFileList() : [];
                                  data-date="<?php echo $file['date']; ?>"
                                  data-type="<?php echo $file['type']; ?>">
                                 <div class="file-info">
-                                    <strong class="file-name"><?php echo htmlspecialchars($file['name']); ?></strong>
+                                    <a href="<?php echo UPLOADS_DIR . '/' . htmlspecialchars($file['name']); ?>" target="_blank" class="file-name-link">
+                                        <strong class="file-name"><?php echo htmlspecialchars($file['name']); ?></strong>
+                                    </a>
                                     <div class="text-muted small">
                                         <span class="file-date"><?php echo $formattedDate; ?></span>
                                         <span class="file-size badge bg-primary rounded-pill ms-2"><?php echo $formattedSize; ?></span>
                                     </div>
                                 </div>
                                 <div class="file-actions mt-2 mt-md-0">
+                                    <button class="btn btn-sm btn-info share-btn" data-file-url="<?php echo htmlspecialchars(UPLOADS_DIR . '/' . $file['name']); ?>">
+                                        <i class="bi bi-share"></i> <span class="d-none d-md-inline">Поделиться</span>
+                                    </button>
                                     <a href="<?php echo UPLOADS_DIR . '/' . htmlspecialchars($file['name']); ?>" class="btn btn-sm btn-success" download>
                                         <i class="bi bi-download"></i> <span class="d-none d-md-inline">Скачать</span>
                                     </a>
@@ -181,27 +186,43 @@ $fileList = isset($_SESSION['authenticated']) ? getFileList() : [];
         </div>
     </div>
 
-    <?php if (isset($_SESSION['authenticated']) && file_exists('upload.log')): ?>
-        <div class="card mt-4">
-            <div class="card-body">
-                <h6 class="card-title mb-2">Логи загрузки</h6>
-                <a href="upload.log" target="_blank" class="btn btn-outline-secondary btn-sm">Открыть upload.log</a>
-                <a href="upload.log" download class="btn btn-outline-primary btn-sm ms-2">Скачать upload.log</a>
-            </div>
-        </div>
-    <?php endif; ?>
-
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <?php if (isset($_SESSION['authenticated'])): ?>
         <script src="script.js"></script>
         <script>
             // Управление модальным окном удаления
             const deleteModal = document.getElementById('deleteModal');
-            deleteModal.addEventListener('show.bs.modal', function (event) {
-                const button = event.relatedTarget;
-                const file = button.getAttribute('data-file');
-                const deleteConfirmBtn = document.getElementById('deleteConfirmBtn');
-                deleteConfirmBtn.href = 'delete.php?delete=' + file;
+            if (deleteModal) {
+                deleteModal.addEventListener('show.bs.modal', function (event) {
+                    const button = event.relatedTarget;
+                    const file = button.getAttribute('data-file');
+                    const deleteConfirmBtn = document.getElementById('deleteConfirmBtn');
+                    deleteConfirmBtn.href = 'delete.php?delete=' + file;
+                });
+            }
+
+            // Кнопка "Поделиться"
+            const shareButtons = document.querySelectorAll('.share-btn');
+            shareButtons.forEach(button => {
+                button.addEventListener('click', function() {
+                    const fileUrl = this.getAttribute('data-file-url');
+                    const absoluteUrl = new URL(fileUrl, window.location.href).href;
+
+                    navigator.clipboard.writeText(absoluteUrl).then(() => {
+                        const originalIcon = this.innerHTML;
+                        this.innerHTML = `<i class="bi bi-check-lg"></i> Скопировано!`;
+                        this.classList.add('btn-success');
+                        this.classList.remove('btn-info');
+
+                        setTimeout(() => {
+                            this.innerHTML = originalIcon;
+                            this.classList.remove('btn-success');
+                            this.classList.add('btn-info');
+                        }, 2000);
+                    }).catch(err => {
+                        console.error('Ошибка копирования в буфер обмена:', err);
+                    });
+                });
             });
         </script>
     <?php endif; ?>
