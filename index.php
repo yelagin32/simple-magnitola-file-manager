@@ -3,6 +3,11 @@ require_once 'config.php';
 
 session_start();
 
+// Генерация CSRF-токена
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
 // Проверка авторизации
 if (!isset($_SESSION['authenticated'])) {
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['password'])) {
@@ -177,7 +182,7 @@ if (isset($_SESSION['authenticated'])) {
                                     <a href="<?php echo UPLOADS_DIR . '/' . htmlspecialchars($file['name']); ?>" class="btn btn-sm btn-success" download>
                                         <i class="bi bi-download me-1"></i><span class="d-none d-md-inline">Скачать</span>
                                     </a>
-                                    <button class="btn btn-sm btn-danger delete-btn" data-bs-toggle="modal" data-bs-target="#deleteModal" data-file="<?php echo urlencode($file['name']); ?>">
+                                    <button class="btn btn-sm btn-danger delete-btn" data-bs-toggle="modal" data-bs-target="#deleteModal" data-file="<?php echo urlencode($file['name']); ?>" data-csrf-token="<?php echo $_SESSION['csrf_token']; ?>">
                                         <i class="bi bi-trash me-1"></i><span class="d-none d-md-inline">Удалить</span>
                                     </button>
                                 </div>
@@ -231,10 +236,11 @@ if (isset($_SESSION['authenticated'])) {
                 deleteModal.addEventListener('show.bs.modal', function (event) {
                     const button = event.relatedTarget;
                     const file = button.getAttribute('data-file');
+                    const csrfToken = button.getAttribute('data-csrf-token');
                     const fileName = decodeURIComponent(file);
 
                     const deleteConfirmBtn = document.getElementById('deleteConfirmBtn');
-                    deleteConfirmBtn.href = 'delete.php?delete=' + file;
+                    deleteConfirmBtn.href = 'delete.php?delete=' + file + '&csrf_token=' + csrfToken;
 
                     const fileNameToDeleteElement = document.getElementById('fileNameToDelete');
                     fileNameToDeleteElement.textContent = fileName;

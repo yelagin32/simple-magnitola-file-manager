@@ -9,6 +9,12 @@ if (!isset($_SESSION['authenticated'])) {
     exit;
 }
 
+if (!isset($_GET['csrf_token']) || !hash_equals($_SESSION['csrf_token'], $_GET['csrf_token'])) {
+    http_response_code(403);
+    echo "Неверный CSRF токен";
+    exit;
+}
+
 if (isset($_GET['delete'])) {
     $fileToDelete = basename($_GET['delete']);
     $filePath = UPLOADS_DIR . '/' . $fileToDelete;

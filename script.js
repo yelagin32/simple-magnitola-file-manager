@@ -8,8 +8,16 @@ function uploadFile(file, remainingSpace) {
     const uploadProgress = document.getElementById('uploadProgress');
     const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
     let start = 0;
-    let end = CHUNK_SIZE;
-    let chunkCounter = 0;
+    
+    // Возобновление загрузки
+    const fileId = file.name + '-' + file.size + '-' + file.lastModified;
+    let uploadedChunk = localStorage.getItem(fileId);
+    if(uploadedChunk){
+        start = parseInt(uploadedChunk, 10) * CHUNK_SIZE;
+    }
+
+    let end = Math.min(start + CHUNK_SIZE, file.size);
+    let chunkCounter = uploadedChunk ? parseInt(uploadedChunk, 10) : 0;
     let totalChunks = Math.ceil(file.size / CHUNK_SIZE);
     let retryCount = 0;
     const MAX_RETRIES = 3;
@@ -29,7 +37,10 @@ function uploadFile(file, remainingSpace) {
                 </div>
                 <div class="error-details text-danger mt-1" style="display: none;"></div>
             </div>
-            <div class="upload-speed">0 KB/s</div>
+            <div>
+                <div class="upload-speed">0 KB/s</div>
+                <div class="eta"></div>
+            </div>
         </div>
         <div class="progress">
             <div class="progress-bar" role="progressbar" style="width: 0%">0%</div>
@@ -44,6 +55,7 @@ function uploadFile(file, remainingSpace) {
     const statusText = uploadItem.querySelector('.status-text');
     const uploadSize = uploadItem.querySelector('.upload-size');
     const speedText = uploadItem.querySelector('.upload-speed');
+    const etaText = uploadItem.querySelector('.eta');
     const progressBar = uploadItem.querySelector('.progress-bar');
     const errorDetails = uploadItem.querySelector('.error-details');
     const uploadActions = uploadItem.querySelector('.upload-actions');
@@ -54,6 +66,7 @@ function uploadFile(file, remainingSpace) {
         if (currentXhr) {
             currentXhr.abort();
         }
+        localStorage.removeItem(fileId);
         statusText.textContent = 'Загрузка отменена пользователем.';
         statusIcon.classList.remove('pending');
         statusIcon.classList.add('error');
@@ -112,12 +125,13 @@ function uploadFile(file, remainingSpace) {
                 }, 1000 * retryCount);
             } else {
                 statusText.textContent = `Ошибка загрузки после ${MAX_RETRIES} попыток`;
-                errorDetails.textContent = `Ошибка загрузки после ${MAX_RETRIES} попыток. Причина: ${reason}`;
+                errorDetails.textContent = `Ошибка загрузки после ${MAX_RETRIES} попыток. Причина: ${reason}`;'''
                 errorDetails.style.display = 'block';
                 statusIcon.classList.remove('pending');
                 statusIcon.classList.add('error');
                 progressBar.classList.add('bg-danger');
                 uploadActions.style.display = 'block';
+                localStorage.removeItem(fileId);
             }
         }
 
@@ -132,6 +146,8 @@ function uploadFile(file, remainingSpace) {
                 const elapsedTime = (currentTime - startTime) / 1000;
                 const loadDifference = e.loaded - lastLoaded;
                 const speed = loadDifference / elapsedTime;
+                const remainingBytes = file.size - (start + e.loaded);
+                const eta = remainingBytes / speed;
 
                 const totalLoaded = start + e.loaded;
                 const percentComplete = (totalLoaded / file.size) * 100;
@@ -141,6 +157,8 @@ function uploadFile(file, remainingSpace) {
 
                 uploadSize.textContent = `${formatFileSize(totalLoaded)} / ${formatFileSize(file.size)}`;
                 speedText.textContent = `${formatFileSize(speed)}/s`;
+                etaText.textContent = eta > 0 ? `~ ${formatTime(eta)}` : '';
+
 
                 startTime = currentTime;
                 lastLoaded = e.loaded;
@@ -161,6 +179,7 @@ function uploadFile(file, remainingSpace) {
 
                     if (response.status === 'success') {
                         retryCount = 0;
+                        localStorage.setItem(fileId, chunkCounter);
 
                         if (end < file.size) {
                             start = end;
@@ -168,6 +187,7 @@ function uploadFile(file, remainingSpace) {
                             chunkCounter++;
                             uploadChunk();
                         } else {
+                            localStorage.removeItem(fileId);
                             statusIcon.classList.remove('pending');
                             statusIcon.classList.add('success');
                             statusText.textContent = 'Загрузка завершена';
@@ -219,47 +239,49 @@ document.getElementById('uploadForm').addEventListener('submit', function(e) {
 // Обработчики для drag and drop
 const dropZone = document.querySelector('.drop-zone');
 
-['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-    dropZone.addEventListener(eventName, preventDefaults, false);
-});
+if(dropZone) {
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, preventDefaults, false);
+    });
 
-function preventDefaults(e) {
-    e.preventDefault();
-    e.stopPropagation();
-}
-
-['dragenter', 'dragover'].forEach(eventName => {
-    dropZone.addEventListener(eventName, highlight, false);
-});
-
-['dragleave', 'drop'].forEach(eventName => {
-    dropZone.addEventListener(eventName, unhighlight, false);
-});
-
-function highlight(e) {
-    dropZone.classList.add('dragover');
-}
-
-function unhighlight(e) {
-    dropZone.classList.remove('dragover');
-}
-
-dropZone.addEventListener('drop', handleDrop, false);
-
-function handleDrop(e) {
-    const files = e.dataTransfer.files;
-    const remainingSpace = parseInt(document.getElementById('upload-container').dataset.remainingSpace, 10);
-    document.getElementById('uploadProgress').innerHTML = '';
-
-    let totalUploadSize = 0;
-    Array.from(files).forEach(file => totalUploadSize += file.size);
-
-    if (remainingSpace !== -1 && totalUploadSize > remainingSpace) {
-        alert(`Ошибка: Суммарный размер файлов (${formatFileSize(totalUploadSize)}) превышает доступную квоту (${formatFileSize(remainingSpace)}).`);
-        return;
+    function preventDefaults(e) {
+        e.preventDefault();
+        e.stopPropagation();
     }
 
-    Array.from(files).forEach(file => uploadFile(file, remainingSpace));
+    ['dragenter', 'dragover'].forEach(eventName => {
+        dropZone.addEventListener(eventName, highlight, false);
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, unhighlight, false);
+    });
+
+    function highlight(e) {
+        dropZone.classList.add('dragover');
+    }
+
+    function unhighlight(e) {
+        dropZone.classList.remove('dragover');
+    }
+
+    dropZone.addEventListener('drop', handleDrop, false);
+
+    function handleDrop(e) {
+        const files = e.dataTransfer.files;
+        const remainingSpace = parseInt(document.getElementById('upload-container').dataset.remainingSpace, 10);
+        document.getElementById('uploadProgress').innerHTML = '';
+
+        let totalUploadSize = 0;
+        Array.from(files).forEach(file => totalUploadSize += file.size);
+
+        if (remainingSpace !== -1 && totalUploadSize > remainingSpace) {
+            alert(`Ошибка: Суммарный размер файлов (${formatFileSize(totalUploadSize)}) превышает доступную квоту (${formatFileSize(remainingSpace)}).`);
+            return;
+        }
+
+        Array.from(files).forEach(file => uploadFile(file, remainingSpace));
+    }
 }
 
 
@@ -269,6 +291,17 @@ function formatFileSize(bytes) {
     if (bytes >= 1048576) return (bytes / 1048576).toFixed(2) + ' МБ';
     if (bytes >= 1024) return (bytes / 1024).toFixed(2) + ' КБ';
     return bytes + ' байт';
+}
+
+function formatTime(seconds) {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = Math.floor(seconds % 60);
+    return [
+        h > 0 ? h + 'ч' : '',
+        m > 0 ? m + 'м' : '',
+        s > 0 ? s + 'с' : '',
+    ].filter(Boolean).join(' ');
 }
 
 // Функция сортировки файлов
