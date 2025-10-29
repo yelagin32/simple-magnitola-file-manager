@@ -121,9 +121,14 @@
 /* Адаптивность для мобильных устройств */
 @media (max-width: 767.98px) {
     .drop-zone {
-        display: none;
+        border: none;
+        padding: 0;
+        background: transparent;
     }
 
+    .drop-zone::before {
+        display: none;
+    }
     .file-item {
         flex-direction: column;
         align-items: flex-start;
