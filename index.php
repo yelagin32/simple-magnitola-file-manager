@@ -167,13 +167,13 @@ if (isset($_SESSION['authenticated'])) {
                                 </div>
                                 <div class="file-actions mt-2 mt-md-0">
                                     <button class="btn btn-sm btn-info share-btn" data-file-url="<?php echo htmlspecialchars(UPLOADS_DIR . '/' . $file['name']); ?>">
-                                        <i class="bi bi-share"></i> <span class="d-none d-md-inline">Поделиться</span>
+                                        <i class="bi bi-share me-1"></i><span class="d-none d-md-inline">Поделиться</span>
                                     </button>
                                     <a href="<?php echo UPLOADS_DIR . '/' . htmlspecialchars($file['name']); ?>" class="btn btn-sm btn-success" download>
-                                        <i class="bi bi-download"></i> <span class="d-none d-md-inline">Скачать</span>
+                                        <i class="bi bi-download me-1"></i><span class="d-none d-md-inline">Скачать</span>
                                     </a>
                                     <button class="btn btn-sm btn-danger delete-btn" data-bs-toggle="modal" data-bs-target="#deleteModal" data-file="<?php echo urlencode($file['name']); ?>">
-                                        <i class="bi bi-trash"></i> <span class="d-none d-md-inline">Удалить</span>
+                                        <i class="bi bi-trash me-1"></i><span class="d-none d-md-inline">Удалить</span>
                                     </button>
                                 </div>
                             </div>
@@ -194,6 +194,8 @@ if (isset($_SESSION['authenticated'])) {
                 </div>
                 <div class="modal-body">
                     Вы уверены, что хотите удалить этот файл?
+                    <br>
+                    <strong id="fileNameToDelete"></strong>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
@@ -224,8 +226,13 @@ if (isset($_SESSION['authenticated'])) {
                 deleteModal.addEventListener('show.bs.modal', function (event) {
                     const button = event.relatedTarget;
                     const file = button.getAttribute('data-file');
+                    const fileName = decodeURIComponent(file);
+
                     const deleteConfirmBtn = document.getElementById('deleteConfirmBtn');
                     deleteConfirmBtn.href = 'delete.php?delete=' + file;
+
+                    const fileNameToDeleteElement = document.getElementById('fileNameToDelete');
+                    fileNameToDeleteElement.textContent = fileName;
                 });
             }
 
