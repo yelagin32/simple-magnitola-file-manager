@@ -7,17 +7,13 @@ function uploadFile(file, remainingSpace) {
 
     const uploadProgress = document.getElementById('uploadProgress');
     const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
-    let start = 0;
-    
-    // Возобновление загрузки
     const fileId = file.name + '-' + file.size + '-' + file.lastModified;
-    let uploadedChunk = localStorage.getItem(fileId);
-    if(uploadedChunk){
-        start = parseInt(uploadedChunk, 10) * CHUNK_SIZE;
-    }
 
-    let end = Math.min(start + CHUNK_SIZE, file.size);
-    let chunkCounter = uploadedChunk ? parseInt(uploadedChunk, 10) : 0;
+    // Возобновление загрузки: получаем номер чанка, с которого нужно начать
+    let startChunk = localStorage.getItem(fileId) ? parseInt(localStorage.getItem(fileId), 10) : 0;
+
+    let start = startChunk * CHUNK_SIZE;
+    let chunkCounter = startChunk;
     let totalChunks = Math.ceil(file.size / CHUNK_SIZE);
     let retryCount = 0;
     const MAX_RETRIES = 3;
@@ -33,7 +29,7 @@ function uploadFile(file, remainingSpace) {
                 <div class="upload-status">
                     <span class="upload-status-icon pending"></span>
                     <span class="status-text">Подготовка к загрузке...</span>
-                    <span class="upload-size">0 / ${formatFileSize(file.size)}</span>
+                    <span class="upload-size">${formatFileSize(start)} / ${formatFileSize(file.size)}</span>
                 </div>
                 <div class="error-details text-danger mt-1" style="display: none;"></div>
             </div>
@@ -43,9 +39,9 @@ function uploadFile(file, remainingSpace) {
             </div>
         </div>
         <div class="progress">
-            <div class="progress-bar" role="progressbar" style="width: 0%">0%</div>
+            <div class="progress-bar" role="progressbar" style="width: ${(start / file.size) * 100}%">${Math.round((start / file.size) * 100)}%</div>
         </div>
-        <div class="upload-actions mt-2 text-end" style="display: none;">
+        <div class="upload-actions mt-2 text-end">
             <button class="btn btn-sm btn-secondary cancel-upload-btn">Отменить</button>
         </div>
     `;
@@ -58,8 +54,11 @@ function uploadFile(file, remainingSpace) {
     const etaText = uploadItem.querySelector('.eta');
     const progressBar = uploadItem.querySelector('.progress-bar');
     const errorDetails = uploadItem.querySelector('.error-details');
-    const uploadActions = uploadItem.querySelector('.upload-actions');
     const cancelButton = uploadItem.querySelector('.cancel-upload-btn');
+
+    if (start > 0) {
+        statusText.textContent = 'Возобновление загрузки...';
+    }
 
     cancelButton.addEventListener('click', () => {
         isCanceled = true;
@@ -71,17 +70,17 @@ function uploadFile(file, remainingSpace) {
         statusIcon.classList.remove('pending');
         statusIcon.classList.add('error');
         progressBar.classList.add('bg-danger');
-        progressBar.style.width = '100%';
         errorDetails.style.display = 'none';
-        uploadActions.style.display = 'none';
         speedText.textContent = '0 KB/s';
+        etaText.textContent = '';
     });
 
     function uploadChunk() {
-        if (isCanceled) {
+        if (isCanceled || start >= file.size) {
             return;
         }
 
+        const end = Math.min(start + CHUNK_SIZE, file.size);
         const chunk = file.slice(start, end);
         const xhr = new XMLHttpRequest();
         currentXhr = xhr;
@@ -92,62 +91,35 @@ function uploadFile(file, remainingSpace) {
         formData.append('chunks', totalChunks);
 
         let startTime = Date.now();
-        let lastLoaded = 0;
-        let uploadTimeout;
 
-        xhr.timeout = 300000;
+        xhr.timeout = 300000; // 5 минут
 
-        xhr.ontimeout = function() {
-            if (isCanceled) return;
-            clearTimeout(uploadTimeout);
-            retryUpload("Таймаут");
-        };
-
-        xhr.onerror = function() {
-            if (isCanceled) return;
-            clearTimeout(uploadTimeout);
-            retryUpload("Ошибка сети");
-        };
+        xhr.ontimeout = () => retryUpload("Таймаут");
+        xhr.onerror = () => retryUpload("Ошибка сети");
 
         function retryUpload(reason) {
             if (isCanceled) return;
-            clearTimeout(uploadTimeout);
 
             if (retryCount < MAX_RETRIES) {
                 retryCount++;
-                statusText.textContent = `Повторная попытка (${retryCount}/${MAX_RETRIES}): ${reason}`;
-                errorDetails.textContent = `Причина: ${reason}. Повторная попытка через ${1000 * retryCount} мс.`;
-                errorDetails.style.display = 'block';
-                uploadActions.style.display = 'none';
-
-                setTimeout(() => {
-                    uploadChunk();
-                }, 1000 * retryCount);
+                statusText.textContent = `Повторная попытка (${retryCount}/${MAX_RETRIES})...`;
+                setTimeout(() => uploadChunk(), 1000 * retryCount);
             } else {
-                statusText.textContent = `Ошибка загрузки после ${MAX_RETRIES} попыток`;
-                errorDetails.textContent = `Ошибка загрузки после ${MAX_RETRIES} попыток. Причина: ${reason}`;'''
+                statusText.textContent = `Ошибка загрузки.`;
+                errorDetails.textContent = `Не удалось загрузить после ${MAX_RETRIES} попыток. Причина: ${reason}`;
                 errorDetails.style.display = 'block';
                 statusIcon.classList.remove('pending');
                 statusIcon.classList.add('error');
                 progressBar.classList.add('bg-danger');
-                uploadActions.style.display = 'block';
-                localStorage.removeItem(fileId);
+                localStorage.removeItem(fileId); // Очищаем, так как возобновление не удалось
             }
         }
 
         xhr.upload.onprogress = function(e) {
-            if (isCanceled) {
-                xhr.abort();
-                return;
-            }
-            clearTimeout(uploadTimeout);
             if (e.lengthComputable) {
-                const currentTime = Date.now();
-                const elapsedTime = (currentTime - startTime) / 1000;
-                const loadDifference = e.loaded - lastLoaded;
-                const speed = loadDifference / elapsedTime;
+                const speed = e.loaded / ((Date.now() - startTime) / 1000);
                 const remainingBytes = file.size - (start + e.loaded);
-                const eta = remainingBytes / speed;
+                const eta = speed > 0 ? remainingBytes / speed : 0;
 
                 const totalLoaded = start + e.loaded;
                 const percentComplete = (totalLoaded / file.size) * 100;
@@ -158,47 +130,33 @@ function uploadFile(file, remainingSpace) {
                 uploadSize.textContent = `${formatFileSize(totalLoaded)} / ${formatFileSize(file.size)}`;
                 speedText.textContent = `${formatFileSize(speed)}/s`;
                 etaText.textContent = eta > 0 ? `~ ${formatTime(eta)}` : '';
-
-
-                startTime = currentTime;
-                lastLoaded = e.loaded;
-
-                uploadTimeout = setTimeout(() => {
-                    xhr.abort();
-                    retryUpload("Нет прогресса");
-                }, 30000);
             }
         };
 
         xhr.onload = function() {
-            if (isCanceled) return;
-            clearTimeout(uploadTimeout);
             if (xhr.status === 200) {
                 try {
                     const response = JSON.parse(xhr.responseText);
 
                     if (response.status === 'success') {
-                        retryCount = 0;
-                        localStorage.setItem(fileId, chunkCounter);
+                        retryCount = 0; // Сбрасываем счетчик при успехе
+                        start = end;
+                        chunkCounter++;
 
-                        if (end < file.size) {
-                            start = end;
-                            end = Math.min(start + CHUNK_SIZE, file.size);
-                            chunkCounter++;
+                        if (start < file.size) {
+                            localStorage.setItem(fileId, chunkCounter); // Сохраняем следующий чанк
                             uploadChunk();
                         } else {
+                            // Последний чанк загружен
                             localStorage.removeItem(fileId);
                             statusIcon.classList.remove('pending');
                             statusIcon.classList.add('success');
                             statusText.textContent = 'Загрузка завершена';
-                            progressBar.classList.remove('bg-danger');
                             progressBar.classList.add('bg-success');
-                            errorDetails.style.display = 'none';
-                            uploadActions.style.display = 'none';
+                            cancelButton.style.display = 'none';
+                            etaText.textContent = '';
 
-                            setTimeout(() => {
-                                location.reload();
-                            }, 1000);
+                            setTimeout(() => location.reload(), 1000);
                         }
                     } else {
                         retryUpload(response.message || "Ошибка сервера");
@@ -213,10 +171,12 @@ function uploadFile(file, remainingSpace) {
 
         xhr.open('POST', 'upload.php', true);
         xhr.send(formData);
+        statusText.textContent = `Загрузка... (${chunkCounter + 1}/${totalChunks})`;
     }
 
     uploadChunk();
 }
+
 
 // Обработчик отправки формы загрузки файлов
 document.getElementById('uploadForm').addEventListener('submit', function(e) {
@@ -287,6 +247,7 @@ if(dropZone) {
 
 // Функция форматирования размера файла в читаемый вид
 function formatFileSize(bytes) {
+    if (bytes === 0) return '0 байт';
     if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(2) + ' ГБ';
     if (bytes >= 1048576) return (bytes / 1048576).toFixed(2) + ' МБ';
     if (bytes >= 1024) return (bytes / 1024).toFixed(2) + ' КБ';
@@ -294,6 +255,7 @@ function formatFileSize(bytes) {
 }
 
 function formatTime(seconds) {
+    if (seconds === Infinity || isNaN(seconds)) return '';
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
     const s = Math.floor(seconds % 60);

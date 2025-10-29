@@ -53,6 +53,9 @@ function getFileList() {
     $files = array_diff(scandir(UPLOADS_DIR), array('.', '..'));
     $fileList = [];
     foreach ($files as $file) {
+        if (substr($file, 0, 1) === '.') {
+            continue;
+        }
         $filePath = UPLOADS_DIR . '/' . $file;
         $fileList[] = [
             'name' => $file,
