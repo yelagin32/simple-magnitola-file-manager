@@ -208,6 +208,10 @@ if (isset($_SESSION['authenticated'])) {
             <h5>SMFM (Simple Magnitola File Manager) by @yelagin</h5>
             <a href="https://yelagin.ru/all/simple-script-filemanager/" target="_blank">https://yelagin.ru/all/simple-script-filemanager/</a>
         </div>
+        <div class="mt-3">
+            <p>Если скрипт вам понравился, донаты приветствуются.</p>
+            <iframe src="https://yoomoney.ru/quickpay/fundraise/button?billNumber=197ONU8AQFK.250326&" width="330" height="50" frameborder="0" allowtransparency="true" scrolling="no"></iframe>
+        </div>
     </footer>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
