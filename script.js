@@ -1,12 +1,12 @@
 // Функция для обработки загрузки файла
-function uploadFile(file, remainingSpace) {
+function uploadFile(file, remainingSpace, currentPath) {
     if (remainingSpace !== -1 && file.size > remainingSpace) {
         alert(`Ошибка: Недостаточно места для загрузки файла ${file.name}. Требуется ${formatFileSize(file.size)}, доступно ${formatFileSize(remainingSpace)}.`);
         return;
     }
 
     const uploadProgress = document.getElementById('uploadProgress');
-    const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
+    const CHUNK_SIZE = 1 * 1024 * 1024; // 1MB chunks (изменено с 5MB)
     const fileId = file.name + '-' + file.size + '-' + file.lastModified;
 
     // Возобновление загрузки: получаем номер чанка, с которого нужно начать
@@ -89,6 +89,7 @@ function uploadFile(file, remainingSpace) {
         formData.append('file', chunk, file.name);
         formData.append('chunk', chunkCounter);
         formData.append('chunks', totalChunks);
+        formData.append('current_path', currentPath);
 
         let startTime = Date.now();
 
@@ -182,9 +183,11 @@ function uploadFile(file, remainingSpace) {
 document.getElementById('uploadForm').addEventListener('submit', function(e) {
     e.preventDefault();
     const files = document.getElementById('fileInput').files;
-    const remainingSpace = parseInt(document.getElementById('upload-container').dataset.remainingSpace, 10);
+    const uploadContainer = document.getElementById('upload-container');
+    const remainingSpace = parseInt(uploadContainer.dataset.remainingSpace, 10);
+    const currentPath = uploadContainer.dataset.currentPath || '';
     document.getElementById('uploadProgress').innerHTML = '';
-    
+
     let totalUploadSize = 0;
     Array.from(files).forEach(file => totalUploadSize += file.size);
 
@@ -193,7 +196,7 @@ document.getElementById('uploadForm').addEventListener('submit', function(e) {
         return;
     }
 
-    Array.from(files).forEach(file => uploadFile(file, remainingSpace));
+    Array.from(files).forEach(file => uploadFile(file, remainingSpace, currentPath));
 });
 
 // Обработчики для drag and drop
@@ -229,7 +232,9 @@ if(dropZone) {
 
     function handleDrop(e) {
         const files = e.dataTransfer.files;
-        const remainingSpace = parseInt(document.getElementById('upload-container').dataset.remainingSpace, 10);
+        const uploadContainer = document.getElementById('upload-container');
+        const remainingSpace = parseInt(uploadContainer.dataset.remainingSpace, 10);
+        const currentPath = uploadContainer.dataset.currentPath || '';
         document.getElementById('uploadProgress').innerHTML = '';
 
         let totalUploadSize = 0;
@@ -240,7 +245,7 @@ if(dropZone) {
             return;
         }
 
-        Array.from(files).forEach(file => uploadFile(file, remainingSpace));
+        Array.from(files).forEach(file => uploadFile(file, remainingSpace, currentPath));
     }
 }
 
@@ -273,6 +278,14 @@ function sortFiles() {
     const files = Array.from(fileList.getElementsByClassName('list-group-item'));
 
     files.sort((a, b) => {
+        const aIsDir = a.dataset.isDir === '1';
+        const bIsDir = b.dataset.isDir === '1';
+
+        // Всегда показываем папки первыми
+        if (aIsDir !== bIsDir) {
+            return bIsDir - aIsDir;
+        }
+
         if (sortType === 'name') {
             return a.dataset.name.localeCompare(b.dataset.name);
         } else if (sortType === 'date') {
@@ -286,3 +299,57 @@ function sortFiles() {
 
     files.forEach(file => fileList.appendChild(file));
 }
+
+// TV Mode: автоматическое скрытие курсора при неактивности
+let cursorTimeout;
+const body = document.body;
+
+function showCursor() {
+    body.classList.add('cursor-active');
+    clearTimeout(cursorTimeout);
+    cursorTimeout = setTimeout(() => {
+        body.classList.remove('cursor-active');
+    }, 3000); // Скрываем курсор через 3 секунды неактивности
+}
+
+// Определяем, запущено ли на большом экране (вероятно TV/магнитола)
+if (window.innerWidth >= 1024) {
+    body.classList.add('tv-mode');
+    document.addEventListener('mousemove', showCursor);
+    document.addEventListener('mousedown', showCursor);
+    document.addEventListener('keydown', showCursor);
+}
+
+// Улучшенная навигация клавиатурой
+document.addEventListener('keydown', function(e) {
+    // ESC - закрыть модальные окна
+    if (e.key === 'Escape') {
+        const modals = document.querySelectorAll('.modal.show');
+        modals.forEach(modal => {
+            const bsModal = bootstrap.Modal.getInstance(modal);
+            if (bsModal) bsModal.hide();
+        });
+    }
+
+    // Enter на кнопках и ссылках
+    if (e.key === 'Enter' && document.activeElement) {
+        const element = document.activeElement;
+        if (element.tagName === 'A' || element.tagName === 'BUTTON') {
+            element.click();
+        }
+    }
+});
+
+// Предотвращение двойной отправки форм
+const forms = document.querySelectorAll('form');
+forms.forEach(form => {
+    form.addEventListener('submit', function(e) {
+        const submitBtn = form.querySelector('button[type="submit"]');
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            setTimeout(() => {
+                submitBtn.disabled = false;
+            }, 2000);
+        }
+    });
+});

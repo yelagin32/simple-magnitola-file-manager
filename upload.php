@@ -1,30 +1,41 @@
 <?php
 
 require_once 'config.php';
+require_once 'functions.php';
+
+// Проверка авторизации
+session_start();
+
+if (!isset($_SESSION['authenticated'])) {
+    http_response_code(403);
+    header('Content-Type: application/json');
+    echo json_encode(['status' => 'error', 'message' => 'Доступ запрещен. Требуется авторизация.']);
+    exit;
+}
 
 // Логирование для отладки
 ini_set('log_errors', 1);
 ini_set('error_log', 'upload.log');
 
-// Функция для получения размера директории
-function getDirectorySize($dir) {
-    $size = 0;
-    $files = glob($dir . '/*');
-    if ($files === false) return 0;
-    foreach ($files as $file) {
-        if (is_file($file)) {
-            $size += filesize($file);
-        }
-    }
-    return $size;
-}
-
 // --- Начало обработки запроса ---
 
 header('Content-Type: application/json');
 
-if (!file_exists(UPLOADS_DIR)) {
-    if (!mkdir(UPLOADS_DIR, 0755, true)) {
+// Получаем текущий путь для загрузки
+$currentPath = isset($_POST['current_path']) ? $_POST['current_path'] : '';
+$safePath = getSafePath($currentPath);
+
+// Определяем целевую директорию
+$targetDir = UPLOADS_DIR . ($safePath ? '/' . $safePath : '');
+
+// Проверка валидности пути
+if (!empty($safePath) && !validatePath($safePath, UPLOADS_DIR)) {
+    echo json_encode(['status' => 'error', 'message' => 'Недопустимый путь для загрузки.']);
+    exit;
+}
+
+if (!file_exists($targetDir)) {
+    if (!mkdir($targetDir, 0755, true)) {
         echo json_encode(['status' => 'error', 'message' => 'Не удалось создать директорию для загрузок.']);
         exit;
     }
@@ -39,8 +50,24 @@ if (!file_exists(CHUNKS_DIR)) {
 
 $chunkIndex = isset($_POST['chunk']) ? intval($_POST['chunk']) : 0;
 $totalChunks = isset($_POST['chunks']) ? intval($_POST['chunks']) : 1;
-$fileName = isset($_FILES['file']['name']) ? basename($_FILES['file']['name']) : 'unknown.tmp';
+$originalFileName = isset($_FILES['file']['name']) ? $_FILES['file']['name'] : 'unknown.tmp';
 $tmpPath = $_FILES['file']['tmp_name'];
+
+// Санитизация имени файла
+$fileName = sanitizeFileName($originalFileName);
+
+// Проверка на пустое имя после санитизации
+if (empty($fileName) || $fileName === '.') {
+    echo json_encode(['status' => 'error', 'message' => 'Недопустимое имя файла.']);
+    exit;
+}
+
+// Проверка расширения файла
+if (!isAllowedFileType($fileName)) {
+    $ext = pathinfo($fileName, PATHINFO_EXTENSION);
+    echo json_encode(['status' => 'error', 'message' => "Тип файла .{$ext} не разрешен для загрузки."]);
+    exit;
+}
 
 $chunkPath = CHUNKS_DIR . '/' . $fileName . '.part' . $chunkIndex;
 
@@ -51,7 +78,9 @@ if (!move_uploaded_file($tmpPath, $chunkPath)) {
 
 // Если это последний чанк, собираем файл
 if (($chunkIndex + 1) === $totalChunks) {
-    $finalPath = UPLOADS_DIR . '/' . $fileName;
+    // Проверяем на конфликт имен и получаем уникальное имя если нужно
+    $uniqueFileName = getUniqueFileName($targetDir, $fileName);
+    $finalPath = $targetDir . '/' . $uniqueFileName;
     $fileSize = 0;
 
     // Проверка квоты перед сборкой файла
@@ -85,6 +114,13 @@ if (($chunkIndex + 1) === $totalChunks) {
         exit;
     }
 
+    // Блокировка файла для предотвращения одновременной записи
+    if (!flock($out, LOCK_EX)) {
+        fclose($out);
+        echo json_encode(['status' => 'error', 'message' => 'Не удалось заблокировать файл для записи.']);
+        exit;
+    }
+
     for ($i = 0; $i < $totalChunks; $i++) {
         $partPath = CHUNKS_DIR . '/' . $fileName . '.part' . $i;
         $in = fopen($partPath, 'rb');
@@ -98,6 +134,8 @@ if (($chunkIndex + 1) === $totalChunks) {
         unlink($partPath); // Удаляем чанк после добавления
     }
 
+    // Снимаем блокировку и закрываем файл
+    flock($out, LOCK_UN);
     fclose($out);
 
     echo json_encode(['status' => 'success']);

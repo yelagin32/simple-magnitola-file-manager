@@ -1,5 +1,6 @@
 <?php
 require_once 'config.php';
+require_once 'functions.php';
 
 session_start();
 
@@ -11,10 +12,14 @@ if (empty($_SESSION['csrf_token'])) {
 // Проверка авторизации
 if (!isset($_SESSION['authenticated'])) {
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['password'])) {
-        if ($_POST['password'] === PASSWORD) {
+        // Защита от brute-force: задержка при неверном пароле
+        if (password_verify($_POST['password'], PASSWORD_HASH)) {
             $_SESSION['authenticated'] = true;
             header('Location: index.php');
             exit;
+        } else {
+            // Задержка 2 секунды при неверном пароле
+            sleep(2);
         }
     }
 } else {
@@ -27,54 +32,31 @@ if (!isset($_SESSION['authenticated'])) {
 }
 
 // --- Вспомогательные функции ---
-function getDirectorySize($dir) {
-    $size = 0;
-    $files = glob($dir . '/*');
-    if ($files === false) return 0;
-    foreach ($files as $file) {
-        if (is_file($file)) {
-            $size += filesize($file);
-        }
-    }
-    return $size;
-}
-
-function formatBytes($bytes, $precision = 2) {
-    if ($bytes === 0) return '0 байт';
-    $units = ['байт', 'КБ', 'МБ', 'ГБ', 'ТБ'];
-    $bytes = max($bytes, 0);
-    $pow = floor(($bytes ? log($bytes) : 0) / log(1024));
-    $pow = min($pow, count($units) - 1);
-    $bytes /= (1 << (10 * $pow));
-    return round($bytes, $precision) . ' ' . $units[$pow];
-}
-
-function getFileList() {
-    $files = array_diff(scandir(UPLOADS_DIR), array('.', '..'));
-    $fileList = [];
-    foreach ($files as $file) {
-        if (substr($file, 0, 1) === '.') {
-            continue;
-        }
-        $filePath = UPLOADS_DIR . '/' . $file;
-        $fileList[] = [
-            'name' => $file,
-            'size' => filesize($filePath),
-            'date' => filemtime($filePath),
-            'type' => pathinfo($filePath, PATHINFO_EXTENSION)
-        ];
-    }
-    usort($fileList, function($a, $b) {
-        return $b['date'] - $a['date'];
-    });
-    return $fileList;
-}
+// Функции перенесены в functions.php
 
 if (isset($_SESSION['authenticated'])) {
-    $fileList = getFileList();
+    // Получаем текущий путь из GET параметра
+    $currentPath = isset($_GET['path']) ? $_GET['path'] : '';
+    $safePath = getSafePath($currentPath);
+
+    // Определяем текущую директорию
+    $currentDir = UPLOADS_DIR . ($safePath ? '/' . $safePath : '');
+
+    // Проверка валидности пути
+    if (!empty($safePath) && !validatePath($safePath, UPLOADS_DIR)) {
+        die('Недопустимый путь');
+    }
+
+    // Создаем директорию если не существует
+    if (!file_exists($currentDir)) {
+        mkdir($currentDir, 0755, true);
+    }
+
+    $fileList = getFileList($currentDir);
+    $breadcrumbs = getBreadcrumbs($safePath);
     $totalSize = getDirectorySize(UPLOADS_DIR);
     $quotaBytes = DISK_QUOTA_GB > 0 ? DISK_QUOTA_GB * 1024 * 1024 * 1024 : 0;
-    $remainingSpace = $quotaBytes > 0 ? $quotaBytes - $totalSize : -1; // -1 означает бесконечность
+    $remainingSpace = $quotaBytes > 0 ? $quotaBytes - $totalSize : -1;
     $percentageUsed = $quotaBytes > 0 ? ($totalSize / $quotaBytes) * 100 : 0;
 }
 
@@ -85,8 +67,6 @@ if (isset($_SESSION['authenticated'])) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Файлообменник</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
     <link href="style.css" rel="stylesheet">
     <link rel="icon" type="image/png" href="/favicon-96x96.png" sizes="96x96" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
@@ -94,7 +74,7 @@ if (isset($_SESSION['authenticated'])) {
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />
 </head>
-<body class="bg-light">
+<body>
     <div class="container py-5">
         <?php if (!isset($_SESSION['authenticated'])): ?>
             <div class="row justify-content-center">
@@ -113,11 +93,16 @@ if (isset($_SESSION['authenticated'])) {
                 </div>
             </div>
         <?php else: ?>
-            <div id="upload-container" class="card mb-4" data-remaining-space="<?php echo $remainingSpace; ?>">
+            <div id="upload-container" class="card mb-4" data-remaining-space="<?php echo $remainingSpace; ?>" data-current-path="<?php echo htmlspecialchars($safePath); ?>">
                 <div class="card-body">
                     <div class="d-flex justify-content-between align-items-center mb-4">
                         <h5 class="card-title mb-0">Загрузка файлов</h5>
-                        <a href="?logout=1" class="btn btn-danger">Выход</a>
+                        <div>
+                            <button class="btn btn-success me-2" data-modal-toggle="createFolderModal">
+                                📁 Создать папку
+                            </button>
+                            <a href="?logout=1" class="btn btn-danger">Выход</a>
+                        </div>
                     </div>
                     
                     <div class="drop-zone mb-3">
@@ -137,7 +122,27 @@ if (isset($_SESSION['authenticated'])) {
             <div class="card">
                 <div class="card-body">
                     <h5 class="card-title mb-4">Список файлов</h5>
-                    
+
+                    <!-- Breadcrumbs навигация -->
+                    <nav aria-label="breadcrumb" class="mb-3">
+                        <ol class="breadcrumb">
+                            <?php foreach ($breadcrumbs as $index => $crumb): ?>
+                                <?php if ($index === count($breadcrumbs) - 1): ?>
+                                    <li class="breadcrumb-item active" aria-current="page">
+                                        📁 <?php echo htmlspecialchars($crumb['name']); ?>
+                                    </li>
+                                <?php else: ?>
+                                    <li class="breadcrumb-item">
+                                        <a href="?path=<?php echo urlencode($crumb['path']); ?>">
+                                            <?php echo $index === 0 ? '🏠' : '📂'; ?>
+                                            <?php echo htmlspecialchars($crumb['name']); ?>
+                                        </a>
+                                    </li>
+                                <?php endif; ?>
+                            <?php endforeach; ?>
+                        </ol>
+                    </nav>
+
                     <?php if ($quotaBytes > 0): ?>
                     <div class="quota-info mb-3">
                         <div class="d-flex justify-content-between">
@@ -163,30 +168,53 @@ if (isset($_SESSION['authenticated'])) {
                     <div id="fileList" class="list-group">
                         <?php if (empty($fileList)): ?>
                             <p class="text-muted">Нет загруженных файлов</p>
-                        <?php else: foreach ($fileList as $file): ?>
-                            <div class="list-group-item d-md-flex justify-content-between align-items-center file-item" 
-                                 data-name="<?php echo htmlspecialchars($file['name']); ?>"
-                                 data-date="<?php echo $file['date']; ?>"
-                                 data-type="<?php echo $file['type']; ?>"
-                                 data-size="<?php echo $file['size']; ?>">
+                        <?php else: foreach ($fileList as $item): ?>
+                            <div class="list-group-item d-md-flex justify-content-between align-items-center file-item"
+                                 data-name="<?php echo htmlspecialchars($item['name']); ?>"
+                                 data-date="<?php echo $item['date']; ?>"
+                                 data-type="<?php echo $item['type']; ?>"
+                                 data-size="<?php echo $item['size']; ?>"
+                                 data-is-dir="<?php echo $item['is_dir'] ? '1' : '0'; ?>">
                                 <div class="file-info">
-                                    <a href="<?php echo UPLOADS_DIR . '/' . htmlspecialchars($file['name']); ?>" target="_blank" class="file-name-link">
-                                        <strong class="file-name"><?php echo htmlspecialchars($file['name']); ?></strong>
-                                    </a>
-                                    <div class="text-muted small">
-                                        <span class="file-date"><?php echo date('d.m.Y H:i:s', $file['date']); ?></span>
-                                        <span class="file-size badge bg-primary rounded-pill ms-2"><?php echo formatBytes($file['size']); ?></span>
-                                    </div>
+                                    <?php if ($item['is_dir']): ?>
+                                        <!-- Папка -->
+                                        <a href="?path=<?php echo urlencode($safePath ? $safePath . '/' . $item['name'] : $item['name']); ?>" class="file-name-link">
+                                            <span style="font-size: 1.5rem;">📁</span>
+                                            <strong class="file-name"><?php echo htmlspecialchars($item['name']); ?></strong>
+                                        </a>
+                                        <div class="text-muted small">
+                                            <span class="file-date"><?php echo date('d.m.Y H:i:s', $item['date']); ?></span>
+                                            <span class="badge bg-secondary rounded-pill ms-2">
+                                                <?php echo $item['file_count']; ?> <?php echo $item['file_count'] === 1 ? 'элемент' : 'элементов'; ?>
+                                            </span>
+                                            <span class="file-size badge bg-info rounded-pill ms-2"><?php echo formatBytes($item['size']); ?></span>
+                                        </div>
+                                    <?php else: ?>
+                                        <!-- Файл -->
+                                        <a href="<?php echo $item['path']; ?>" target="_blank" class="file-name-link">
+                                            <span style="font-size: 1.2rem;">📄</span>
+                                            <strong class="file-name"><?php echo htmlspecialchars($item['name']); ?></strong>
+                                        </a>
+                                        <div class="text-muted small">
+                                            <span class="file-date"><?php echo date('d.m.Y H:i:s', $item['date']); ?></span>
+                                            <span class="file-size badge bg-primary rounded-pill ms-2"><?php echo formatBytes($item['size']); ?></span>
+                                        </div>
+                                    <?php endif; ?>
                                 </div>
                                 <div class="file-actions mt-2 mt-md-0">
-                                    <button class="btn btn-sm btn-info share-btn" data-file-url="<?php echo htmlspecialchars(UPLOADS_DIR . '/' . $file['name']); ?>">
-                                        <i class="bi bi-share me-1"></i><span class="d-none d-md-inline">Поделиться</span>
-                                    </button>
-                                    <a href="<?php echo UPLOADS_DIR . '/' . htmlspecialchars($file['name']); ?>" class="btn btn-sm btn-success" download>
-                                        <i class="bi bi-download me-1"></i><span class="d-none d-md-inline">Скачать</span>
-                                    </a>
-                                    <button class="btn btn-sm btn-danger delete-btn" data-bs-toggle="modal" data-bs-target="#deleteModal" data-file="<?php echo urlencode($file['name']); ?>" data-csrf-token="<?php echo $_SESSION['csrf_token']; ?>">
-                                        <i class="bi bi-trash me-1"></i><span class="d-none d-md-inline">Удалить</span>
+                                    <?php if (!$item['is_dir']): ?>
+                                        <button class="btn btn-sm btn-info share-btn" data-file-url="<?php echo htmlspecialchars($item['path']); ?>">
+                                            🔗 <span class="d-none d-md-inline">Поделиться</span>
+                                        </button>
+                                        <a href="<?php echo $item['path']; ?>" class="btn btn-sm btn-success" download>
+                                            ⬇️ <span class="d-none d-md-inline">Скачать</span>
+                                        </a>
+                                    <?php endif; ?>
+                                    <button class="btn btn-sm btn-danger delete-btn" data-modal-toggle="deleteModal"
+                                            data-file="<?php echo urlencode($item['name']); ?>"
+                                            data-is-dir="<?php echo $item['is_dir'] ? '1' : '0'; ?>"
+                                            data-csrf-token="<?php echo $_SESSION['csrf_token']; ?>">
+                                        🗑️ <span class="d-none d-md-inline">Удалить</span>
                                     </button>
                                 </div>
                             </div>
@@ -195,6 +223,37 @@ if (isset($_SESSION['authenticated'])) {
                 </div>
             </div>
         <?php endif; ?>
+    </div>
+
+    <!-- Модальное окно создания папки -->
+    <div class="modal fade" id="createFolderModal" tabindex="-1" aria-labelledby="createFolderModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="createFolderModalLabel">Создать новую папку</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="createFolderForm">
+                        <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
+                        <input type="hidden" name="current_path" value="<?php echo htmlspecialchars($safePath); ?>">
+                        <div class="mb-3">
+                            <label for="folderName" class="form-label">Имя папки:</label>
+                            <input type="text" class="form-control" id="folderName" name="folder_name" required
+                                   placeholder="Введите имя папки" pattern="[a-zA-Zа-яА-ЯёЁ0-9._\-\s()]+"
+                                   title="Разрешены буквы, цифры, пробелы, точки, дефисы и скобки">
+                        </div>
+                        <div class="alert alert-info small">
+                            ℹ️ Используйте только буквы, цифры и базовые символы
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="button" class="btn btn-primary" id="createFolderBtn">Создать</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Модальное окно подтверждения удаления -->
@@ -206,9 +265,11 @@ if (isset($_SESSION['authenticated'])) {
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body">
-                    Вы уверены, что хотите удалить этот файл?
-                    <br>
+                    <p id="deleteMessage">Вы уверены, что хотите удалить этот файл?</p>
                     <strong id="fileNameToDelete"></strong>
+                    <div class="alert alert-warning mt-3" id="folderWarning" style="display: none;">
+                        ⚠️ Внимание! Папка и все её содержимое будут удалены безвозвратно!
+                    </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
@@ -229,24 +290,72 @@ if (isset($_SESSION['authenticated'])) {
         </div>
     </footer>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="modal.js"></script>
     <?php if (isset($_SESSION['authenticated'])): ?>
         <script src="script.js"></script>
         <script>
             // Управление модальным окном удаления
             const deleteModal = document.getElementById('deleteModal');
             if (deleteModal) {
-                deleteModal.addEventListener('show.bs.modal', function (event) {
-                    const button = event.relatedTarget;
-                    const file = button.getAttribute('data-file');
-                    const csrfToken = button.getAttribute('data-csrf-token');
-                    const fileName = decodeURIComponent(file);
+                const deleteModalInstance = Modal.getInstance(deleteModal);
 
-                    const deleteConfirmBtn = document.getElementById('deleteConfirmBtn');
-                    deleteConfirmBtn.href = 'delete.php?delete=' + file + '&csrf_token=' + csrfToken;
+                document.addEventListener('click', function(e) {
+                    const button = e.target.closest('.delete-btn');
+                    if (button) {
+                        const file = button.getAttribute('data-file');
+                        const isDir = button.getAttribute('data-is-dir') === '1';
+                        const csrfToken = button.getAttribute('data-csrf-token');
+                        const fileName = decodeURIComponent(file);
+                        const currentPath = '<?php echo addslashes($safePath); ?>';
 
-                    const fileNameToDeleteElement = document.getElementById('fileNameToDelete');
-                    fileNameToDeleteElement.textContent = fileName;
+                        const deleteConfirmBtn = document.getElementById('deleteConfirmBtn');
+                        deleteConfirmBtn.href = 'delete.php?delete=' + file + '&csrf_token=' + csrfToken + '&path=' + encodeURIComponent(currentPath);
+
+                        const fileNameToDeleteElement = document.getElementById('fileNameToDelete');
+                        fileNameToDeleteElement.textContent = fileName;
+
+                        const deleteMessage = document.getElementById('deleteMessage');
+                        const folderWarning = document.getElementById('folderWarning');
+
+                        if (isDir) {
+                            deleteMessage.textContent = 'Вы уверены, что хотите удалить эту папку?';
+                            folderWarning.style.display = 'block';
+                        } else {
+                            deleteMessage.textContent = 'Вы уверены, что хотите удалить этот файл?';
+                            folderWarning.style.display = 'none';
+                        }
+                    }
+                });
+            }
+
+            // Управление созданием папки
+            const createFolderBtn = document.getElementById('createFolderBtn');
+            if (createFolderBtn) {
+                createFolderBtn.addEventListener('click', function() {
+                    const form = document.getElementById('createFolderForm');
+                    const formData = new FormData(form);
+
+                    if (!form.checkValidity()) {
+                        form.reportValidity();
+                        return;
+                    }
+
+                    fetch('create_folder.php', {
+                        method: 'POST',
+                        body: formData
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            location.reload();
+                        } else {
+                            alert('Ошибка: ' + data.message);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Ошибка:', error);
+                        alert('Произошла ошибка при создании папки');
+                    });
                 });
             }
 
@@ -258,13 +367,13 @@ if (isset($_SESSION['authenticated'])) {
                     const absoluteUrl = new URL(fileUrl, window.location.href).href;
 
                     navigator.clipboard.writeText(absoluteUrl).then(() => {
-                        const originalIcon = this.innerHTML;
-                        this.innerHTML = `<i class="bi bi-check-lg"></i> Скопировано!`;
+                        const originalHTML = this.innerHTML;
+                        this.innerHTML = '✅ Скопировано!';
                         this.classList.add('btn-success');
                         this.classList.remove('btn-info');
 
                         setTimeout(() => {
-                            this.innerHTML = originalIcon;
+                            this.innerHTML = originalHTML;
                             this.classList.remove('btn-success');
                             this.classList.add('btn-info');
                         }, 2000);
